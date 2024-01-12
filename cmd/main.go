@@ -21,7 +21,7 @@ import (
 
 	// Importing custom API types and controllers
 	v1 "github.com/5GSEC/nimbus/api/v1"
-	"github.com/5GSEC/nimbus/pkg/exporter/nimbuspolicy"
+	"github.com/5GSEC/nimbus/pkg/processor"
 	"github.com/5GSEC/nimbus/pkg/receiver/securityintent"
 	"github.com/5GSEC/nimbus/pkg/receiver/securityintentbinding"
 	"github.com/5GSEC/nimbus/pkg/receiver/watcher"
@@ -90,13 +90,17 @@ func main() {
 		setupLog.Error(err, "Unable to start manager")
 		os.Exit(1)
 	}
-
 	watcherController, err := watcher.NewWatcherController(mgr.GetClient())
 	if err != nil {
 		setupLog.Error(err, "Unable to create WatcherController")
 		os.Exit(1)
 	}
 
+	policyProcessor, err := processor.NewPolicyProcessor(mgr.GetClient(), mgr.GetScheme())
+	if err != nil {
+		setupLog.Error(err, "Unable to create PolicyProcessor")
+		os.Exit(1)
+	}
 	if err = (&securityintent.SecurityIntentReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
@@ -109,25 +113,11 @@ func main() {
 	if err = (&securityintentbinding.SecurityIntentBindingReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
+		CheckedBindings:   make(map[string]bool),
 		WatcherController: watcherController,
+		PolicyProcessor:   policyProcessor,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Unable to create controller", "controller", "SecurityIntentBinding")
-		os.Exit(1)
-	}
-
-	nimbusPolicyReconciler := nimbuspolicy.NewNimbusPolicyReconciler(mgr.GetClient(), mgr.GetScheme())
-	if err != nil {
-		setupLog.Error(err, "Unable to create NimbusPolicyReconciler")
-		os.Exit(1)
-	}
-	watcherNimbusPolicy, err := watcher.NewWatcherNimbusPolicy(mgr.GetClient())
-	if err != nil {
-		setupLog.Error(err, "Unable to create WatcherNimbusPolicy")
-		os.Exit(1)
-	}
-	nimbusPolicyReconciler.WatcherNimbusPolicy = watcherNimbusPolicy
-	if err = nimbusPolicyReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Unable to set up NimbusPolicyReconciler with manager", "controller", "NimbusPolicy")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder
@@ -137,11 +127,6 @@ func main() {
 		setupLog.Error(err, "Unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "Unable to set up ready check")
-		os.Exit(1)
-	}
-
 	// Starting the controller manager.
 	setupLog.Info("Starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
