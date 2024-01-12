@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	kubearmorv1 "github.com/kubearmor/KubeArmor/pkg/KubeArmorController/api/security.kubearmor.com/v1"
+	ksp "github.com/kubearmor/KubeArmor/pkg/KubeArmorController/api/security.kubearmor.com/v1"
 )
 
 // Initialize the global scheme variable
@@ -33,12 +32,14 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	utilruntime.Must(v1.AddToScheme(scheme))
-	utilruntime.Must(kubearmorv1.AddToScheme(scheme))
+	utilruntime.Must(ksp.AddToScheme(scheme))
 }
 
 func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
-	log.Println("Starting Kubernetes client configuration")
+	log := ctrl.Log.WithName("main")
+
+	log.Info("Starting Kubernetes client configuration")
 
 	var cfg *rest.Config
 	var err error
@@ -46,49 +47,48 @@ func main() {
 		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
-			log.Fatalf("Failed to set up Kubernetes config: %v", err)
+			log.Error(err, "Failed to set up Kubernetes config")
 		}
 	}
 
 	c, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		log.Error(err, "Failed to create client")
 	}
 
-	log.Println("Starting NimbusPolicyWatcher")
+	log.Info("Booting up the Nimbus Policy Watcher")
 	npw := watcher.NewNimbusPolicyWatcher(c)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	policyChan, err := npw.WatchNimbusPolicies(ctx)
 	if err != nil {
-		log.Fatalf("NimbusPolicy: Watch Failed %v", err)
+		log.Error(err, "NimbusPolicy: Watch Failed")
 	}
 
 	detectedPolicies := make(map[string]bool)
 	enforcer := enforcer.NewPolicyEnforcer(c)
 
-	log.Println("Starting policy processing loop")
+	log.Info("Booting up the Kubearmor Policy Processor")
 	for {
 		select {
 		case policy := <-policyChan:
 			policyKey := fmt.Sprintf("%s/%s", policy.Namespace, policy.Name)
 			if _, detected := detectedPolicies[policyKey]; !detected {
 				if verifier.HandlePolicy(policy) {
-					log.Printf("NimbusPolicy: Detected policy: Name: %s, Namespace: %s, ID: %s \n%+v\n", policy.Namespace, policy.Name, getRulesIDs(policy), policy)
+					log.Info("Detected NimbusPolicy: Name: %s, Namespace: %s, ID: %s \n%+v\n", policy.Namespace, policy.Name, getRulesIDs(policy), policy)
 					detectedPolicies[policyKey] = true
 
-					log.Println("Exporting and Applying NimbusPolicy to KubeArmorPolicy")
 					err := enforcer.Enforcer(ctx, policy)
 					if err != nil {
-						log.Printf("Error exporting NimbusPolicy: %v", err)
+						log.Error(err, "Error exporting NimbusPolicy")
 					} else {
-						log.Println("Successfully exported NimbusPolicy to KubeArmorPolicy")
+						log.Info("Completed exporting the Nimbus policy to a KubeArmor policy.")
 					}
 				}
 			}
 		case <-time.After(120 * time.Second):
-			log.Println("NimbusPolicy: No detections for 120 seconds")
+			log.Info("NimbusPolicy: No detections for 120 seconds")
 		}
 	}
 }
