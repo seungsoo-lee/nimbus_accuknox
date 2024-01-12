@@ -6,6 +6,7 @@ package nimbuspolicybuilder
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/checker/decls"
@@ -13,6 +14,7 @@ import (
 
 	v1 "github.com/5GSEC/nimbus/api/v1"
 	"github.com/5GSEC/nimbus/pkg/processor/intentbinder"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -103,7 +105,7 @@ func (builder *NimbusPolicyBuilder) BuildNimbusPolicy(ctx context.Context, clien
 	}
 
 	// Extracts match labels from the binding selector.
-	matchLabels, err := extractSelector(binding.Spec.Selector)
+	matchLabels, err := extractSelector(ctx, client, binding.Spec.Selector, bindingName, bindingNamespace)
 	if err != nil {
 		return nil, err
 	}
@@ -216,16 +218,19 @@ func processSecurityIntentParams(rule *v1.Rule, param v1.SecurityIntentParams) {
 }
 
 // extractSelector extracts match labels from a Selector.
-func extractSelector(selector v1.Selector) (map[string]string, error) {
+func extractSelector(ctx context.Context, client client.Client, selector v1.Selector, name string, namespace string) (map[string]string, error) {
 	matchLabels := make(map[string]string) // Initialize map for match labels.
 
 	// Process CEL expressions.
 	if len(selector.CEL) > 0 {
-		celMatchLabels, err := ProcessCEL(selector.CEL)
+		celMatchLabels, err := ProcessCEL(ctx, client, namespace, selector.CEL)
 		if err != nil {
 			return nil, fmt.Errorf("Error processing CEL: %v", err)
 		}
 		for k, v := range celMatchLabels {
+			// Remove the "labels["" and "]" parts from the key
+			k = strings.TrimPrefix(k, `labels["`)
+			k = strings.TrimSuffix(k, `"]`)
 			matchLabels[k] = v
 		}
 	}
@@ -245,10 +250,13 @@ func extractSelector(selector v1.Selector) (map[string]string, error) {
 }
 
 // ProcessCEL processes CEL expressions to generate matchLabels.
-func ProcessCEL(expressions []string) (map[string]string, error) {
+func ProcessCEL(ctx context.Context, k8sClient client.Client, namespace string, expressions []string) (map[string]string, error) {
+	log := log.FromContext(ctx)
+	log.Info("Processing CEL expressions", "Namespace", namespace)
+
 	env, err := cel.NewEnv(
 		cel.Declarations(
-			decls.NewVar("label", decls.NewMapType(decls.String, decls.String)),
+			decls.NewVar("labels", decls.NewMapType(decls.String, decls.String)), // Declare 'labels' variable
 		),
 	)
 	if err != nil {
@@ -257,6 +265,17 @@ func ProcessCEL(expressions []string) (map[string]string, error) {
 
 	matchLabels := make(map[string]string)
 
+	// Retrieve pod list
+	var podList corev1.PodList
+	if err := k8sClient.List(ctx, &podList, client.InNamespace(namespace)); err != nil {
+		log.Error(err, "Error listing pods in namespace", "Namespace", namespace)
+		return nil, fmt.Errorf("Error listing pods: %v", err)
+	}
+
+	// Initialize an empty map to store label expressions
+	labelExpressions := make(map[string]bool)
+
+	// Parse and evaluate label expressions
 	for _, expr := range expressions {
 		ast, issues := env.Compile(expr)
 		if issues != nil && issues.Err() != nil {
@@ -268,23 +287,59 @@ func ProcessCEL(expressions []string) (map[string]string, error) {
 			return nil, fmt.Errorf("Error creating CEL program: %v", err)
 		}
 
-		out, _, err := prg.Eval(map[string]interface{}{
-			"label": map[string]interface{}{},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("Error evaluating CEL expression: %v", err)
-		}
+		// Evaluate CEL expression for each pod
+		for _, pod := range podList.Items {
+			resource := map[string]interface{}{
+				"labels": pod.Labels,
+			}
 
-		// Handle the output of the CEL expression.
-		if outValue, ok := out.Value().(map[string]interface{}); ok {
-			for k, v := range outValue {
-				if val, ok := v.(string); ok {
-					matchLabels[k] = val
-				}
+			out, _, err := prg.Eval(map[string]interface{}{
+				"labels": resource["labels"],
+			})
+			if err != nil {
+				return nil, fmt.Errorf("Error evaluating CEL expression: %v", err)
+			}
+
+			if outValue, ok := out.Value().(bool); ok && outValue {
+				// Mark this expression as true for at least one pod
+				labelExpressions[expr] = true
 			}
 		}
 	}
+
+	// Extract labels based on true label expressions
+	for expr, isTrue := range labelExpressions {
+		if isTrue {
+			// Extract labels from the expression and add them to matchLabels
+			labels := extractLabelsFromExpression(expr)
+			for k, v := range labels {
+				matchLabels[k] = v
+			}
+		}
+	}
+
 	return matchLabels, nil
+}
+
+// Extracts labels from a CEL expression
+func extractLabelsFromExpression(expr string) map[string]string {
+	// This is a simplified example, you can implement a more robust label extraction logic here
+	labels := make(map[string]string)
+
+	// Split the expression by '==' and extract labels
+	parts := strings.Split(expr, "==")
+	if len(parts) == 2 {
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// Remove quotes from value if present
+		value = strings.Trim(value, "\"'")
+
+		// Add the extracted label to the map
+		labels[key] = value
+	}
+
+	return labels
 }
 
 // ProcessMatchLabels processes any/all fields to generate matchLabels.
