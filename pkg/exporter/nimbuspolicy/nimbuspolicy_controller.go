@@ -13,12 +13,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "github.com/5GSEC/nimbus/api/v1"
-	"github.com/5GSEC/nimbus/pkg/receiver/watcher"
+	watcher "github.com/5GSEC/nimbus/pkg/receiver/watcher"
 )
 
 // NimbusPolicyReconciler reconciles a NimbusPolicy object.
 type NimbusPolicyReconciler struct {
-	client.Client
+	Client              client.Client
 	Scheme              *runtime.Scheme
 	WatcherNimbusPolicy *watcher.WatcherNimbusPolicy
 }
