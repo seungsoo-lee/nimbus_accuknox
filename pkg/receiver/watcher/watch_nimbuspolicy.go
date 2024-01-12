@@ -44,10 +44,9 @@ func (wn *WatcherNimbusPolicy) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	if err != nil {
 		if errors.IsNotFound(err) {
-			log.Info("NimbusPolicy resource not found. Ignoring since object must be deleted", "Name", req.Name, "Namespace", req.Namespace)
 			return nil, nil
 		}
-		log.Error(err, "Failed to get NimbusPolicy", "Name", req.Name, "Namespace", req.Namespace)
+		log.Error(err, "Failed to get NimbusPolicy")
 		return nil, err
 	}
 	return nimbusPol, nil

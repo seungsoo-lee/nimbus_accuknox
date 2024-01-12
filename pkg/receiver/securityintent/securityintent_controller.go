@@ -61,23 +61,22 @@ func (r *SecurityIntentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	log := log.FromContext(ctx)
 
 	if r.WatcherController == nil {
-		fmt.Println("SecurityIntentReconciler: WatcherController is nil")
-		return ctrl.Result{}, fmt.Errorf("WatcherController is not properly initialized")
+		return ctrl.Result{}, fmt.Errorf("SecurityIntentReconciler: WatcherController is nil")
 	}
 
 	intent, err := r.WatcherController.WatcherIntent.Reconcile(ctx, req)
 	if err != nil {
-		log.Error(err, "Error in WatcherIntent.Reconcile", "Request", req.NamespacedName)
+		log.Error(err, "SecurityIntentReconciler: WatcherIntent is error")
 		return ctrl.Result{}, err
 	}
 
 	if intent != nil {
-		log.Info("SecurityIntent resource found", "Name", req.Name, "Namespace", req.Namespace)
+		log.Info("Found: SecurityIntent", "Name", req.Name, "Namespace", req.Namespace)
+		return ctrl.Result{}, err
 	} else {
-		log.Info("SecurityIntent resource not found", "Name", req.Name, "Namespace", req.Namespace)
+		log.Info("Not Found: SecurityIntent", "Name", req.Name, "Namespace", req.Namespace)
+		return ctrl.Result{}, err
 	}
-
-	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the reconciler with the provided manager.
