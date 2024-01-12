@@ -6,6 +6,7 @@ package securityintentbinding
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,8 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "github.com/5GSEC/nimbus/api/v1"
-	"github.com/5GSEC/nimbus/pkg/processor/intentbinder"
-	"github.com/5GSEC/nimbus/pkg/processor/nimbuspolicybuilder"
+	"github.com/5GSEC/nimbus/pkg/processor"
 	"github.com/5GSEC/nimbus/pkg/receiver/watcher"
 	kubearmorv1 "github.com/kubearmor/KubeArmor/pkg/KubeArmorController/api/security.kubearmor.com/v1"
 )
@@ -25,7 +25,9 @@ import (
 type SecurityIntentBindingReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
+	CheckedBindings   map[string]bool // Map to track already detected bindings
 	WatcherController *watcher.WatcherController
+	PolicyProcessor   *processor.PolicyProcessor
 }
 
 func NewSecurityIntentBindingReconciler(client client.Client, scheme *runtime.Scheme) *SecurityIntentBindingReconciler {
@@ -40,18 +42,26 @@ func NewSecurityIntentBindingReconciler(client client.Client, scheme *runtime.Sc
 		return nil
 	}
 
+	PolicyProcessor, err := processor.NewPolicyProcessor(client, scheme)
+	if err != nil {
+		fmt.Println("SecurityIntentBindingReconciler: Failed to initialize PolicyProcessor:", err)
+		return nil
+	}
+
 	return &SecurityIntentBindingReconciler{
 		Client:            client,
 		Scheme:            scheme,
+		CheckedBindings:   make(map[string]bool),
 		WatcherController: WatcherController,
+		PolicyProcessor:   PolicyProcessor,
 	}
 }
 
-//+kubebuilder:rbac:groups=intent.security.nimbus.com,resources=securityintentbindings,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=intent.security.nimbus.com,resources=securityintentbindings/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=intent.security.nimbus.com,resources=securityintentbindings/finalizers,verbs=update
+// +kubebuilder:rbac:groups=intent.security.nimbus.com,resources=securityintentbindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=intent.security.nimbus.com,resources=securityintentbindings/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=intent.security.nimbus.com,resources=securityintentbindings/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// Reconcile is part of the main Kubernetes reconciliation loop, which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
 // the SecurityIntentBinding object against the actual cluster state, and then
@@ -65,8 +75,10 @@ func (r *SecurityIntentBindingReconciler) Reconcile(ctx context.Context, req ctr
 	log := log.FromContext(ctx)
 
 	if r.WatcherController == nil {
-		fmt.Println("SecurityIntentBindingReconciler: WatcherController is nil")
-		return ctrl.Result{}, fmt.Errorf("WatcherController is not properly initialized")
+		return ctrl.Result{}, fmt.Errorf("SecurityIntentBindingReconciler: WatcherController is nil")
+	}
+	if r.PolicyProcessor == nil {
+		return ctrl.Result{}, fmt.Errorf("SecurityIntentBindingReconciler: PolicyProcessor is nil")
 	}
 
 	binding, err := r.WatcherController.WatcherBinding.Reconcile(ctx, req)
@@ -75,10 +87,45 @@ func (r *SecurityIntentBindingReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{}, err
 	}
 
+	bindingKey := fmt.Sprintf("%s/%s", req.Namespace, req.Name)
 	if binding != nil {
-		log.Info("SecurityIntentBinding resource found", "Name", req.Name, "Namespace", req.Namespace)
+		// If the binding is already detected, log 'Found' and set to log 'Not Found' in the next reconciliation
+		if !r.CheckedBindings[bindingKey] {
+			log.Info("Found: SecurityIntentBinding", "Name", req.Name, "Namespace", req.Namespace)
+			r.CheckedBindings[bindingKey] = true
+		}
+
+		allIntentsFound := true
+		if r.CheckedBindings[bindingKey] {
+			for _, intentRef := range binding.Spec.Intents {
+				intent := &v1.SecurityIntent{}
+				err := r.Get(ctx, types.NamespacedName{Name: intentRef.Name, Namespace: binding.Namespace}, intent)
+				if err != nil {
+					if errors.IsNotFound(err) {
+						// If a matching SecurityIntent is not found, wait for the next reconciliation
+						allIntentsFound = false
+						log.Info("Not Found: Securityintent, Waiting ....")
+						break
+					}
+					return ctrl.Result{}, err
+				}
+			}
+		}
+
+		if !allIntentsFound {
+			// If not all SecurityIntents are found, wait for the next reconciliation
+			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		}
+
+		// If all SecurityIntents are found, perform the necessary processing
+		_, err := r.PolicyProcessor.Processor(ctx, req, binding)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{}, nil
 	} else {
-		log.Info("SecurityIntentBinding resource not found", "Name", req.Name, "Namespace", req.Namespace)
+		log.Info("Not Found: SecurityIntentBinding", "Name", req.Name, "Namespace", req.Namespace)
 
 		// Delete associated NimbusPolicy if exists
 		nimbusPolicy := &v1.NimbusPolicy{}
@@ -106,28 +153,6 @@ func (r *SecurityIntentBindingReconciler) Reconcile(ctx context.Context, req ctr
 		}
 		return ctrl.Result{}, nil
 	}
-
-	// Call the MatchAndBindIntents function to generate the binding information.
-	bindingInfo, err := intentbinder.MatchAndBindIntents(ctx, r.Client, req, binding)
-	if err != nil {
-		log.Error(err, "Failed to match and bind intents")
-		return ctrl.Result{}, err
-	}
-
-	// Create a NimbusPolicy.
-	nimbusPolicy, err := nimbuspolicybuilder.BuildNimbusPolicy(ctx, r.Client, req, bindingInfo)
-	if err != nil {
-		log.Error(err, "Failed to build NimbusPolicy")
-		return ctrl.Result{}, err
-	}
-
-	// Store the NimbusPolicy on the Kubernetes API server.
-	if err := r.Create(ctx, nimbusPolicy); err != nil {
-		log.Error(err, "Failed to create NimbusPolicy")
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
