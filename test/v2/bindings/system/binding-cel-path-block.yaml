@@ -1,0 +1,11 @@
+apiVersion: intent.security.nimbus.com/v1
+kind: SecurityIntentBinding
+metadata:
+  name: sys-proc-path-sleep-block
+  namespace: multiubuntu
+spec:
+  intents:
+    - name: group-1-proc-path-sleep-block
+  selector:
+    cel:
+      - labels["group"] == "group-1"
