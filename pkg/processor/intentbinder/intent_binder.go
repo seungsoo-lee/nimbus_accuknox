@@ -13,7 +13,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// BindingInfo holds the names of matched SecurityIntent and SecurityIntentBinding.
+// IntentBinder is responsible for binding SecurityIntents and SecurityIntentBindings.
+type IntentBinder struct {
+	Client client.Client
+}
+
+// NewIntentBinder creates a new instance of IntentBinder.
+func NewIntentBinder(client client.Client) (*IntentBinder, error) {
+	return &IntentBinder{
+		Client: client,
+	}, nil
+}
+
+// BindingInfo holds the information about the binding between SecurityIntent and SecurityIntentBinding.
 type BindingInfo struct {
 	IntentNames       []string
 	IntentNamespaces  []string
@@ -21,46 +33,60 @@ type BindingInfo struct {
 	BindingNamespaces []string
 }
 
-// NewBindingInfo creates a new instance of BindingInfo.
-func NewBindingInfo(intentNames []string, intentNamespaces []string, bindingNames []string, bindingNamespaces []string) *BindingInfo {
-	return &BindingInfo{
-		IntentNames:       intentNames,
-		IntentNamespaces:  intentNamespaces,
-		BindingNames:      bindingNames,
-		BindingNamespaces: bindingNamespaces,
+func (ib *IntentBinder) IntentBinder(ctx context.Context, client client.Client, req ctrl.Request, bindings *v1.SecurityIntentBinding) (*BindingInfo, error) {
+	log := log.FromContext(ctx)
+	log.Info("Start Intent Binder")
+
+	intents, err := FindMatchingSecurityIntents(ctx, client, bindings)
+	if err != nil {
+		return nil, err
 	}
+
+	return CreateBindingInfo(ctx, intents, bindings), nil
 }
 
-func MatchAndBindIntents(ctx context.Context, client client.Client, req ctrl.Request, bindings *v1.SecurityIntentBinding) (*BindingInfo, error) {
+func FindMatchingSecurityIntents(ctx context.Context, client client.Client, bindings *v1.SecurityIntentBinding) ([]*v1.SecurityIntent, error) {
 	log := log.FromContext(ctx)
-	log.Info("Starting intent and binding matching")
+	log.Info("Looking for matching security intents", "BindingName", bindings.Name, "Namespace", bindings.Namespace)
 
-	// Fetching SecurityIntent objects.
+	if bindings == nil {
+		log.Info("No bindings available for processing")
+		return nil, nil
+	}
+
 	var intents []*v1.SecurityIntent
 	for _, intentRef := range bindings.Spec.Intents {
 		intent := &v1.SecurityIntent{}
-		if err := client.Get(ctx, types.NamespacedName{Name: intentRef.Name, Namespace: bindings.Namespace}, intent); err != nil {
-			log.Error(err, "Failed to get SecurityIntent", "Name", intentRef.Name)
-			continue
+		err := client.Get(ctx, types.NamespacedName{Name: intentRef.Name, Namespace: bindings.Namespace}, intent)
+		if err == nil {
+			intents = append(intents, intent)
 		}
-		intents = append(intents, intent)
 	}
 
-	var matchedIntentNames []string
-	var matchedIntentNamespaces []string
-	var matchedBindingNames []string
-	var matchedBindingNamespaces []string
+	return intents, nil
+}
 
-	// Checking match for SecurityIntent and SecurityIntentBinding.
+func CreateBindingInfo(ctx context.Context, intents []*v1.SecurityIntent, binding *v1.SecurityIntentBinding) *BindingInfo {
+	log := log.FromContext(ctx)
+
+	bindingInfo := &BindingInfo{
+		// Initialize slices
+		IntentNames:       []string{},
+		IntentNamespaces:  []string{},
+		BindingNames:      []string{},
+		BindingNamespaces: []string{},
+	}
+
+	log.Info("Saving binding information", "BindingName", binding.Name, "Namespace", binding.Namespace)
+
 	for _, intent := range intents {
-		matchedIntentNames = append(matchedIntentNames, intent.Name)
-		matchedIntentNamespaces = append(matchedIntentNamespaces, intent.Namespace)
+		// Add binding information
+		bindingInfo.IntentNames = append(bindingInfo.IntentNames, intent.Name)
+		bindingInfo.IntentNamespaces = append(bindingInfo.IntentNamespaces, intent.Namespace)
 	}
+	// Add current binding information
+	bindingInfo.BindingNames = append(bindingInfo.BindingNames, binding.Name)
+	bindingInfo.BindingNamespaces = append(bindingInfo.BindingNamespaces, binding.Namespace)
 
-	// Adding names and namespaces of SecurityIntentBinding.
-	matchedBindingNames = append(matchedBindingNames, bindings.Name)
-	matchedBindingNamespaces = append(matchedBindingNamespaces, bindings.Namespace)
-
-	log.Info("Matching completed", "Matched Intent Names", matchedIntentNames, "Matched Binding Names", matchedBindingNames)
-	return NewBindingInfo(matchedIntentNames, matchedIntentNamespaces, matchedBindingNames, matchedBindingNamespaces), nil
+	return bindingInfo
 }

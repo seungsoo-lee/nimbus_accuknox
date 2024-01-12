@@ -19,25 +19,38 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// NimbusPolicyBuilder is responsible for building NimbusPolicy.
+type NimbusPolicyBuilder struct {
+	Client client.Client
+}
+
+// NewNimbusPolicyBuilder creates a new instance of NimbusPolicyBuilder.
+func NewNimbusPolicyBuilder(client client.Client) (*NimbusPolicyBuilder, error) {
+	return &NimbusPolicyBuilder{
+		Client: client,
+	}, nil
+}
+
 // BuildNimbusPolicy generates a NimbusPolicy based on SecurityIntent and SecurityIntentBinding.
-func BuildNimbusPolicy(ctx context.Context, client client.Client, req ctrl.Request, bindingInfo *intentbinder.BindingInfo) (*v1.NimbusPolicy, error) {
+func (builder *NimbusPolicyBuilder) BuildNimbusPolicy(ctx context.Context, client client.Client, req ctrl.Request, bindingInfo *intentbinder.BindingInfo) (*v1.NimbusPolicy, error) {
 	log := log.FromContext(ctx)
-	log.Info("Starting NimbusPolicy building")
+	log.Info("Start NimbusPolicy Builder")
 
 	// Validates bindingInfo.
 	if bindingInfo == nil || len(bindingInfo.IntentNames) == 0 || len(bindingInfo.IntentNamespaces) == 0 ||
 		len(bindingInfo.BindingNames) == 0 || len(bindingInfo.BindingNamespaces) == 0 {
-		return nil, fmt.Errorf("invalid bindingInfo: one or more arrays are empty")
+		return nil, fmt.Errorf("Invalid bindingInfo: one or more arrays are empty")
 	}
 
-	var nimbusRulesList []v1.NimbusRules
+	log.Info("Create NimbusPolicy")
 
+	var nimbusRulesList []v1.NimbusRules
 	// Iterate over intent names to build rules.
 	for i, intentName := range bindingInfo.IntentNames {
 		// Checks for array length consistency.
 		if i >= len(bindingInfo.IntentNamespaces) || i >= len(bindingInfo.BindingNames) ||
 			i >= len(bindingInfo.BindingNamespaces) {
-			return nil, fmt.Errorf("index out of range in bindingInfo arrays")
+			return nil, fmt.Errorf("Index error: out of range for bindingInfo array.")
 		}
 
 		intentNamespace := bindingInfo.IntentNamespaces[i]
@@ -48,8 +61,7 @@ func BuildNimbusPolicy(ctx context.Context, client client.Client, req ctrl.Reque
 
 		// Checks if arrays in bindingInfo are empty.
 		if len(bindingInfo.IntentNames) == 0 || len(bindingInfo.BindingNames) == 0 {
-			fmt.Println("No intents or bindings to process")
-			return nil, fmt.Errorf("no intents or bindings to process")
+			return nil, fmt.Errorf("Empty error: No intent or binding to be processed")
 		}
 
 		var rules []v1.Rule
@@ -63,6 +75,7 @@ func BuildNimbusPolicy(ctx context.Context, client client.Client, req ctrl.Reque
 			MatchPatterns:     []v1.MatchPattern{},
 			MatchCapabilities: []v1.MatchCapability{},
 			MatchSyscalls:     []v1.MatchSyscall{},
+			MatchSyscallPaths: []v1.MatchSyscallPath{},
 			FromCIDRSet:       []v1.CIDRSet{},
 			ToPorts:           []v1.ToPort{},
 		}
@@ -112,7 +125,7 @@ func BuildNimbusPolicy(ctx context.Context, client client.Client, req ctrl.Reque
 		},
 	}
 
-	log.Info("NimbusPolicy built successfully", "Policy", nimbusPolicy)
+	log.Info("Completed creating New NimbusPolicy", "Policy.Name", nimbusPolicy.Name, "Policy.Namespace", nimbusPolicy.Namespace)
 	return nimbusPolicy, nil
 }
 
@@ -235,7 +248,7 @@ func extractSelector(selector v1.Selector) (map[string]string, error) {
 func ProcessCEL(expressions []string) (map[string]string, error) {
 	env, err := cel.NewEnv(
 		cel.Declarations(
-			decls.NewVar("label", decls.NewMapType(decls.String, decls.String)), // Define label as a map of string to string.
+			decls.NewVar("label", decls.NewMapType(decls.String, decls.String)),
 		),
 	)
 	if err != nil {
