@@ -47,12 +47,12 @@ func (ib *IntentBinder) IntentBinder(ctx context.Context, client client.Client, 
 
 func FindMatchingSecurityIntents(ctx context.Context, client client.Client, bindings *v1.SecurityIntentBinding) ([]*v1.SecurityIntent, error) {
 	log := log.FromContext(ctx)
-	log.Info("Looking for matching security intents", "BindingName", bindings.Name, "Namespace", bindings.Namespace)
 
 	if bindings == nil {
 		log.Info("No bindings available for processing")
 		return nil, nil
 	}
+	log.Info("Looking for matching security intents", "BindingName", bindings.Name, "Namespace", bindings.Namespace)
 
 	var intents []*v1.SecurityIntent
 	for _, intentRef := range bindings.Spec.Intents {
