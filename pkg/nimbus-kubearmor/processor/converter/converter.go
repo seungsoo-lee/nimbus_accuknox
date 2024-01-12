@@ -11,33 +11,38 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	kubearmorv1 "github.com/kubearmor/KubeArmor/pkg/KubeArmorController/api/security.kubearmor.com/v1"
+	ksp "github.com/kubearmor/KubeArmor/pkg/KubeArmorController/api/security.kubearmor.com/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// PolicyConverter is used for converting NimbusPolicy to KubeArmorPolicy.
 type PolicyConverter struct {
 	Client client.Client
 }
 
+// NewPolicyConverter creates a new instance of PolicyConverter.
 func NewPolicyConverter(client client.Client) *PolicyConverter {
 	return &PolicyConverter{Client: client}
 }
 
-func (pt *PolicyConverter) Converter(ctx context.Context, nimbusPolicy v1.NimbusPolicy) (*kubearmorv1.KubeArmorPolicy, error) {
+// Converter converts a NimbusPolicy to a KubeArmorPolicy.
+func (pt *PolicyConverter) Converter(ctx context.Context, nimbusPolicy v1.NimbusPolicy) (*ksp.KubeArmorPolicy, error) {
 	log := log.FromContext(ctx)
 	log.Info("Start Converting a NimbusPolicy", "PolicyName", nimbusPolicy.Name)
 
-	kubeArmorPolicy := &kubearmorv1.KubeArmorPolicy{
+	kubeArmorPolicy := &ksp.KubeArmorPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      nimbusPolicy.Name,
 			Namespace: nimbusPolicy.Namespace,
 		},
-		Spec: kubearmorv1.KubeArmorPolicySpec{
-			Selector: kubearmorv1.SelectorType{
+		Spec: ksp.KubeArmorPolicySpec{
+			// Setting up the Selector
+			Selector: ksp.SelectorType{
 				MatchLabels: nimbusPolicy.Spec.Selector.MatchLabels,
 			},
 		},
 	}
+	// Converting NimbusPolicy's Selector to KubeArmorPolicy's Selector
 	kubeArmorPolicy.Spec.Selector.MatchLabels = nimbusPolicy.Spec.Selector.MatchLabels
 
 	for _, nimbusRule := range nimbusPolicy.Spec.NimbusRules {
@@ -51,7 +56,7 @@ func (pt *PolicyConverter) Converter(ctx context.Context, nimbusPolicy v1.Nimbus
 		category := idParts[2]
 
 		for _, rule := range nimbusRule.Rule {
-			kubeArmorPolicy.Spec.Action = kubearmorv1.ActionType(rule.RuleAction)
+			kubeArmorPolicy.Spec.Action = ksp.ActionType(rule.RuleAction)
 
 			switch ruleType {
 			case "proc":
@@ -99,14 +104,16 @@ func (pt *PolicyConverter) Converter(ctx context.Context, nimbusPolicy v1.Nimbus
 		}
 	}
 
+	// Setting a default protocol if no network protocols are matched.
 	if len(kubeArmorPolicy.Spec.Network.MatchProtocols) == 0 {
-		kubeArmorPolicy.Spec.Network.MatchProtocols = append(kubeArmorPolicy.Spec.Network.MatchProtocols, kubearmorv1.MatchNetworkProtocolType{
-			Protocol: "raw",
+		kubeArmorPolicy.Spec.Network.MatchProtocols = append(kubeArmorPolicy.Spec.Network.MatchProtocols, ksp.MatchNetworkProtocolType{
+			Protocol: "raw", // Set an appropriate default protocol.
 		})
 	}
+	// Setting a default capability if no capabilities are matched.
 	if len(kubeArmorPolicy.Spec.Capabilities.MatchCapabilities) == 0 {
-		kubeArmorPolicy.Spec.Capabilities.MatchCapabilities = append(kubeArmorPolicy.Spec.Capabilities.MatchCapabilities, kubearmorv1.MatchCapabilitiesType{
-			Capability: "lease",
+		kubeArmorPolicy.Spec.Capabilities.MatchCapabilities = append(kubeArmorPolicy.Spec.Capabilities.MatchCapabilities, ksp.MatchCapabilitiesType{
+			Capability: "lease", // Set an appropriate default capability.
 		})
 	}
 

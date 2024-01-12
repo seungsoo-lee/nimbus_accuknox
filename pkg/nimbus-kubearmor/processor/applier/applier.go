@@ -8,10 +8,11 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	kubearmorv1 "github.com/kubearmor/KubeArmor/pkg/KubeArmorController/api/security.kubearmor.com/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	ksp "github.com/kubearmor/KubeArmor/pkg/KubeArmorController/api/security.kubearmor.com/v1"
 )
 
 // Applier manages the enforcement of policies.
@@ -25,11 +26,11 @@ func NewApplier(client client.Client) *Applier {
 }
 
 // ApplyPolicy applies or updates a given KubeArmorPolicy.
-func (e *Applier) ApplyPolicy(ctx context.Context, kubeArmorPolicy *kubearmorv1.KubeArmorPolicy) error {
+func (e *Applier) ApplyPolicy(ctx context.Context, kubeArmorPolicy *ksp.KubeArmorPolicy) error {
 	log := log.FromContext(ctx)
 
 	// Check if the policy already exists
-	existingPolicy := &kubearmorv1.KubeArmorPolicy{}
+	existingPolicy := &ksp.KubeArmorPolicy{}
 	err := e.Client.Get(ctx, types.NamespacedName{Name: kubeArmorPolicy.Name, Namespace: kubeArmorPolicy.Namespace}, existingPolicy)
 	if err != nil && !errors.IsNotFound(err) {
 		log.Error(err, "Existing KubeArmorPolicy lookup failed", "PolicyName", kubeArmorPolicy.Name)
