@@ -67,6 +67,9 @@ func (r *SecurityIntentBindingReconciler) Reconcile(ctx context.Context, req ctr
 	if err != nil {
 		logger.Error(err, "failed to build NimbusPolicy")
 		return ctrl.Result{}, err
+	} else if nimbusPolicy == nil {
+		logger.Info("Abort NimbusPolicy creation as no labels matched the CEL expressions")
+		return ctrl.Result{}, nil
 	}
 
 	existingNp := &v1.NimbusPolicy{}
