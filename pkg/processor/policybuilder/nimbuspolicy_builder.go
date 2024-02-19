@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -71,10 +72,22 @@ func BuildNimbusPolicy(ctx context.Context, client client.Client, scheme *runtim
 	if err != nil {
 		return nil, err
 	}
-
 	if len(matchLabels) == 0 {
-		logger.Error(err, "No labels matched the CEL expressions, aborting NimbusPolicy creation due to missing keys in labels")
-		return nil, nil
+		return nil, err
+	}
+
+	var existingNP v1.NimbusPolicy
+	err = client.Get(ctx, types.NamespacedName{Name: binding.Name, Namespace: binding.Namespace}, &existingNP)
+	if err != nil && !errors.IsNotFound(err) {
+		return nil, err
+	}
+	if err == nil {
+		existingNP.Spec.NimbusRules = nimbusRulesList
+		existingNP.Status.LastUpdated = metav1.Now()
+		if err := client.Update(ctx, &existingNP); err != nil {
+			logger.Error(err, "failed to update existing NimbusPolicy")
+			return nil, err
+		}
 	}
 
 	// Creates a NimbusPolicy.
@@ -108,7 +121,7 @@ func fetchBinding(ctx context.Context, client client.Client, name string, namesp
 	logger := log.FromContext(ctx)
 	var binding v1.SecurityIntentBinding
 	if err := client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &binding); err != nil {
-		logger.Error(err, "Failed to get SecurityIntentBinding")
+		logger.Error(err, "failed to get SecurityIntentBinding")
 		return nil, err
 	}
 	return &binding, nil
