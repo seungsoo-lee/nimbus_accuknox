@@ -36,7 +36,7 @@ func (r *SecurityIntentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if errors.IsNotFound(err) {
 			logger.Info("SecurityIntent not found. Ignoring since object must be deleted")
 			// When SI is deleted, we should trigger update for related SIBs
-			if err := r.updateRelatedSIBs(ctx, req); err != nil {
+			if err := r.triggerSIBUpdate(ctx, req); err != nil {
 				logger.Error(err, "failed to update related SecurityIntentBindings after SI deletion", "SecurityIntent.Name", req.Name)
 				return ctrl.Result{}, err
 			}
@@ -58,10 +58,9 @@ func (r *SecurityIntentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if intentRef.Name == req.Name {
 				sib.Status.LastUpdated = metav1.Now()
 				if err := r.Status().Update(ctx, sib); err != nil {
-					logger.Error(err, "failed to update SecurityIntentBinding status for SI update", "SecurityIntentBinding.Name", sib.Name)
 					return ctrl.Result{}, err
 				}
-				logger.Info("Updated SecurityIntentBinding due to SecurityIntent change", "SecurityIntentBinding", sib.Name, "SecurityIntent", req.Name)
+				logger.Info("update SecurityIntentBinding due to SecurityIntent change", "SecurityIntentBinding", sib.Name, "SecurityIntent", req.Name)
 				break
 			}
 		}
@@ -88,33 +87,22 @@ func (r *SecurityIntentReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 }
 
 // Update related SecurityIntentBindings after SecurityIntent deletion
-func (r *SecurityIntentReconciler) updateRelatedSIBs(ctx context.Context, req ctrl.Request) error {
+func (r *SecurityIntentReconciler) triggerSIBUpdate(ctx context.Context, req ctrl.Request) error {
+	logger := log.FromContext(ctx)
+
 	var sibList v1.SecurityIntentBindingList
 	if err := r.List(ctx, &sibList, client.InNamespace(req.Namespace)); err != nil {
 		return err
 	}
 
-	logger := log.FromContext(ctx)
-
 	for _, sib := range sibList.Items {
 		sibCopy := sib
-		updated := false
-		for idx, intentRef := range sibCopy.Spec.Intents {
-			if intentRef.Name == req.Name {
-				// Remove the reference to the deleted or updated SecurityIntent
-				sibCopy.Spec.Intents = append(sibCopy.Spec.Intents[:idx], sibCopy.Spec.Intents[idx+1:]...)
-				updated = true
-				break
-			}
+		sibCopy.Status.LastUpdated = metav1.Now()
+		if err := r.Status().Update(ctx, &sibCopy); err != nil {
+			logger.Error(err, "failed to trigger update for SecurityIntentBinding after SI deletion", "SecurityIntentBinding.Name", sibCopy.Name)
+			return err
 		}
-		if updated {
-			// Mark SIB as needing an update
-			if err := r.Update(ctx, &sibCopy); err != nil { // 수정된 복사본 사용
-				logger.Error(err, "Failed to update SecurityIntentBinding after SI deletion/update", "SecurityIntentBinding.Name", sibCopy.Name)
-				return err
-			}
-			logger.Info("Updated SecurityIntentBinding due to SecurityIntent deletion/update", "SecurityIntentBinding", sibCopy.Name, "SecurityIntent", req.Name)
-		}
+		logger.Info("Triggered update for SecurityIntentBinding due to SecurityIntent deletion", "SecurityIntentBinding", sibCopy.Name, "SecurityIntent", req.Name)
 	}
 
 	return nil

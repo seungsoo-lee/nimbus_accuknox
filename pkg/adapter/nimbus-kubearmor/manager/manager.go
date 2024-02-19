@@ -67,7 +67,7 @@ func Run(ctx context.Context) {
 		case deletedNp := <-deletedNpCh:
 			deleteKsp(ctx, deletedNp.Name, deletedNp.Namespace)
 		case updatedKsp := <-updatedKspCh:
-			reconcileKsp(ctx, updatedKsp.Name, updatedKsp.Namespace, false)
+			createOrUpdateKsp(ctx, updatedKsp.Name, updatedKsp.Namespace)
 		case deletedKsp := <-deletedKspCh:
 			reconcileKsp(ctx, deletedKsp.Name, deletedKsp.Namespace, true)
 		case _ = <-clusterNpChan: // Fixme: CreateKSP based on ClusterNP
@@ -92,8 +92,8 @@ func reconcileKsp(ctx context.Context, kspName, namespace string, deleted bool) 
 		logger.Info("Reconciling deleted KubeArmorPolicy", "KubeArmorPolicy.Name", kspName, "KubeArmorPolicy.Namespace", namespace)
 	} else {
 		logger.Info("Reconciling modified KubeArmorPolicy", "KubeArmorPolicy.Name", kspName, "KubeArmorPolicy.Namespace", namespace)
+		createOrUpdateKsp(ctx, npName, namespace)
 	}
-	createOrUpdateKsp(ctx, npName, namespace)
 }
 
 func createOrUpdateKsp(ctx context.Context, npName, npNamespace string) {
@@ -181,8 +181,6 @@ func deleteUnnecessaryKsps(ctx context.Context, currentKsps []kubearmorv1.KubeAr
 		if _, needed := currentKspNames[existingKsp.Name]; !needed {
 			if err := k8sClient.Delete(ctx, &existingKsp); err != nil {
 				logger.Error(err, "Failed to delete unnecessary KubeArmorPolicy", "KubeArmorPolicy.Name", existingKsp.Name)
-			} else {
-				logger.Info("Deleted unnecessary KubeArmorPolicy", "KubeArmorPolicy.Name", existingKsp.Name)
 			}
 		}
 	}

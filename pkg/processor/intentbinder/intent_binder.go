@@ -6,6 +6,7 @@ package intentbinder
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -31,7 +32,7 @@ func NewBindingInfo(intentNames []string, bindingNames []string, bindingNamespac
 
 func MatchAndBindIntents(ctx context.Context, client client.Client, bindings *v1.SecurityIntentBinding) *BindingInfo {
 	logger := log.FromContext(ctx)
-	logger.Info("SecurityIntent and SecurityIntentBinding matching started")
+	logger.Info("Matching SecurityIntent and SecurityIntentBinding started")
 
 	var matchedIntents []string
 	var matchedBindings []string
@@ -40,8 +41,11 @@ func MatchAndBindIntents(ctx context.Context, client client.Client, bindings *v1
 	for _, intentRef := range bindings.Spec.Intents {
 		var intent v1.SecurityIntent
 		if err := client.Get(ctx, types.NamespacedName{Name: intentRef.Name, Namespace: bindings.Namespace}, &intent); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
 			logger.Info("failed to get SecurityIntent", "SecurityIntent.Name", intentRef.Name)
-			continue
+			return nil
 		}
 		matchedIntents = append(matchedIntents, intent.Name)
 	}
