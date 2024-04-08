@@ -334,9 +334,11 @@ func deleteDanglingkcps(ctx context.Context, cnp intentv1.ClusterNimbusPolicy, l
 
 	var kcpsOwnedByCnp []kyvernov1.ClusterPolicy
 	for _, kcp := range existingkcps.Items {
-		ownerRef := kcp.OwnerReferences[0]
-		if ownerRef.Name == cnp.Name && ownerRef.UID == cnp.UID {
-			kcpsOwnedByCnp = append(kcpsOwnedByCnp, kcp)
+		if len(kcp.OwnerReferences) > 0 {
+			ownerRef := kcp.OwnerReferences[0]
+			if ownerRef.Name == cnp.Name && ownerRef.UID == cnp.UID {
+				kcpsOwnedByCnp = append(kcpsOwnedByCnp, kcp)
+			}
 		}
 	}
 	if len(kcpsOwnedByCnp) == 0 {
